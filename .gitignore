@@ -27,3 +27,4 @@ dist-ssr
 .env
 future.txt
 steps.txt
+npm_run_dev.txt
