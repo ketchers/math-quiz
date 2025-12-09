@@ -1,0 +1,168 @@
+import React, { useState } from 'react';
+import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Upload } from 'lucide-react';
+import { doc, setDoc, deleteDoc, db, useQuizzes, addDoc, collection } from '../../services/firebaseService';
+import { MathEditor } from '../Editor/MathEditor';
+
+export const TeacherDashboard = ({ user, handleLogout }) => {
+    const quizzes = useQuizzes(user.uid);
+    const [view, setView] = useState('list'); // 'list', 'edit', 'new'
+    const [activeQuiz, setActiveQuiz] = useState(null);
+    const [isSaving, setIsSaving] = useState(false);
+
+    // --- CRUD Operations ---
+
+    const startNewQuiz = () => {
+        setActiveQuiz({
+            title: 'New Quiz Title',
+            description: 'A brief description of this math quiz.',
+            isLocked: false,
+            questions: [
+                { id: 'q-' + Date.now(), text: 'What is the value of $x$ in the equation $2x + 5 = 15$?', showFeedback: true }
+            ],
+            allowShuffle: true,
+            allowReview: true,
+            teacherId: user.uid,
+            teacherName: user.displayName || user.email,
+        });
+        setView('new');
+    };
+
+    const startEditQuiz = (quiz) => {
+        setActiveQuiz(quiz);
+        setView('edit');
+    };
+
+    const saveQuiz = async () => {
+        if (!activeQuiz || !db) return;
+        setIsSaving(true);
+        const quizData = { ...activeQuiz };
+
+        try {
+            if (view === 'new') {
+                // Create a new document in the 'quizzes' collection
+                // We use setDoc with a custom ID or addDoc for auto-ID
+                // Let's use setDoc with a timestamp for simplicity in this example, or addDoc
+                const newRef = doc(collection(db, "quizzes"));
+                await setDoc(newRef, quizData);
+            } else {
+                // Update existing
+                await setDoc(doc(db, 'quizzes', activeQuiz.id), quizData);
+            }
+            alert('Quiz saved successfully!');
+            setView('list');
+            setActiveQuiz(null);
+        } catch (error) {
+            console.error('Error saving quiz:', error);
+            alert('Failed to save quiz.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const deleteQuiz = async (quizId) => {
+        if (window.confirm('Are you sure you want to delete this quiz?')) {
+            try {
+                await deleteDoc(doc(db, 'quizzes', quizId));
+            } catch (error) {
+                console.error('Error deleting quiz:', error);
+                alert('Failed to delete quiz.');
+            }
+        }
+    };
+
+    // --- Rendering Logic ---
+
+    const renderQuizList = () => (
+        <div className="space-y-4">
+            <h2 className="text-3xl font-extrabold text-slate-800 mb-6 flex items-center justify-between">
+                Your Quizzes ({quizzes.length})
+                <button onClick={startNewQuiz} className="bg-indigo-600 text-white p-3 rounded-full hover:bg-indigo-700 transition shadow-lg flex items-center gap-2 px-6">
+                    <Plus className="w-5 h-5" /> New Quiz
+                </button>
+            </h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {quizzes.length === 0 ? (
+                    <div className="col-span-3 text-center p-12 bg-white rounded-xl shadow-lg border border-slate-200 text-slate-500">
+                        <LayoutList className="w-8 h-8 mx-auto mb-3" />
+                        <p className="font-bold">No Quizzes Found</p>
+                        <p>Click "New Quiz" to get started.</p>
+                    </div>
+                ) : (
+                    quizzes.map((quiz) => (
+                        <div key={quiz.id} className="bg-white p-6 rounded-xl shadow-lg border border-slate-100 hover:shadow-xl transition flex flex-col justify-between">
+                            <div>
+                                <h3 className="text-xl font-bold text-slate-800 mb-2 truncate">{quiz.title}</h3>
+                                <div className="text-sm text-slate-600 space-y-1">
+                                    <div className="flex items-center gap-2">
+                                        <BookOpen className="w-4 h-4 text-indigo-500" />
+                                        <span>{quiz.questions?.length || 0} Questions</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {quiz.isLocked ? <Lock className="w-4 h-4 text-red-500" /> : <BookOpen className="w-4 h-4 text-green-500" />}
+                                        <span>{quiz.isLocked ? 'Locked' : 'Active'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="mt-4 flex gap-2 pt-4 border-t border-slate-100">
+                                <button onClick={() => startEditQuiz(quiz)} className="flex-1 flex items-center justify-center p-3 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg font-semibold hover:bg-indigo-100 transition text-sm">
+                                    <Edit3 className="w-4 h-4 mr-2" /> Edit
+                                </button>
+                                <button onClick={() => deleteQuiz(quiz.id)} className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition text-sm">
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+
+    const renderQuizEditor = () => (
+        <div className="space-y-6">
+            <h2 className="text-3xl font-extrabold text-slate-800 flex items-center justify-between">
+                {view === 'new' ? 'Create New Quiz' : 'Edit Quiz'}
+                <div className="flex gap-3">
+                    <button onClick={() => setView('list')} className="flex items-center gap-2 py-2 px-4 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition font-semibold">
+                        <Users className="w-5 h-5" /> View Quizzes
+                    </button>
+                    <button onClick={saveQuiz} disabled={isSaving} className="flex items-center gap-2 py-2 px-6 bg-green-600 text-white rounded-xl font-bold shadow-lg shadow-green-200 hover:bg-green-700 transition disabled:opacity-70 disabled:shadow-none">
+                        {isSaving ? <Loader2 className="animate-spin w-5 h-5" /> : <Save className="w-5 h-5" />}
+                        {isSaving ? 'Saving...' : 'Save Quiz'}
+                    </button>
+                </div>
+            </h2>
+
+            <MathEditor 
+                quiz={activeQuiz} 
+                setQuiz={setActiveQuiz} 
+                isTeacher={true} 
+            />
+        </div>
+    );
+
+    return (
+        <div className="min-h-screen bg-slate-50">
+            <header className="sticky top-0 z-10 bg-white border-b border-slate-200 shadow-sm">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                        <BookOpen className="w-7 h-7 text-indigo-600" />
+                        <h1 className="text-2xl font-extrabold text-slate-800">Teacher Dashboard</h1>
+                    </div>
+                    <div className="flex items-center gap-4">
+                         <span className="text-sm font-semibold text-slate-600 hidden sm:block">{user.displayName || user.email}</span>
+                        <button onClick={handleLogout} className="bg-red-50 text-red-700 p-2 rounded-lg hover:bg-red-100 transition">
+                            <LogOut className="w-5 h-5" />
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                {view === 'list' && renderQuizList()}
+                {(view === 'edit' || view === 'new') && activeQuiz && renderQuizEditor()}
+            </main>
+        </div>
+    );
+};
