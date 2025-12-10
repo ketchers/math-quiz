@@ -1,27 +1,32 @@
-import React, { useRef } from 'react';
-import { Plus, Trash2, GripVertical, Type, Image as ImageIcon, Calculator, Code, Bold, Italic, Shuffle, Eye, EyeOff } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, GripVertical, Shuffle, Eye, EyeOff } from 'lucide-react';
 import { MathRenderer } from './MathRenderer';
+import { EditorToolbar } from './EditorToolbar';
 
-// --- Toolbar Component (Helper) ---
-const EditorToolbar = ({ onInsert }) => (
-    <div className="flex flex-wrap gap-1 p-2 bg-slate-100 border-b border-slate-200 rounded-t-lg">
-        <button onClick={() => onInsert('**', '**')} className="p-1.5 text-slate-600 hover:bg-slate-200 rounded" title="Bold"><Bold className="w-4 h-4"/></button>
-        <button onClick={() => onInsert('*', '*')} className="p-1.5 text-slate-600 hover:bg-slate-200 rounded" title="Italic"><Italic className="w-4 h-4"/></button>
-        <div className="w-px h-6 bg-slate-300 mx-1"></div>
-        <button onClick={() => onInsert('$', '$')} className="p-1.5 text-slate-600 hover:bg-slate-200 rounded font-serif font-bold" title="Inline Math">$\dots$</button>
-        <button onClick={() => onInsert('$$', '$$')} className="p-1.5 text-slate-600 hover:bg-slate-200 rounded font-serif font-bold" title="Block Math">$$</button>
-        <button onClick={() => onInsert('\n```sage\n', '\n```\n')} className="p-1.5 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700 rounded flex gap-1 items-center" title="SageMath Cell">
-            <Calculator className="w-4 h-4"/> <span className="text-[10px] font-bold">SAGE</span>
-        </button>
-        <div className="w-px h-6 bg-slate-300 mx-1"></div>
-        <button onClick={() => onInsert('![Alt Text](', ')')} className="p-1.5 text-slate-600 hover:bg-slate-200 rounded" title="Image"><ImageIcon className="w-4 h-4"/></button>
-    </div>
-);
-
-// --- Single Question Editor ---
+// --- DEBOUNCED QUESTION EDITOR ---
 const QuestionEditor = ({ question, index, onChange, onDelete }) => {
+    // 1. FAST STATE: Updates instantly so typing feels responsive
+    const [localText, setLocalText] = useState(question.text);
     const textareaRef = useRef(null);
 
+    // Sync local state if the parent question changes (e.g. loading a saved quiz)
+    useEffect(() => {
+        setLocalText(question.text);
+    }, [question.id]); 
+
+    // 2. SLOW UPDATE: The "Debounce" Logic
+    // This waits 500ms after you STOP typing before updating the actual quiz data
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (localText !== question.text) {
+                onChange({ ...question, text: localText });
+            }
+        }, 500); // <--- THE SPEED LIMIT (0.5 seconds)
+
+        return () => clearTimeout(timer);
+    }, [localText, question, onChange]);
+
+    // Toolbar Helper (Updates Fast State)
     const handleInsert = (startTag, endTag) => {
         const textarea = textareaRef.current;
         if (!textarea) return;
@@ -35,11 +40,8 @@ const QuestionEditor = ({ question, index, onChange, onDelete }) => {
         
         const newText = before + startTag + (selection || "text") + endTag + after;
         
-        // Update parent
-        const newQ = { ...question, text: newText };
-        onChange(newQ);
+        setLocalText(newText);
         
-        // Restore focus (timeout needed for React render cycle)
         setTimeout(() => {
             textarea.focus();
             textarea.setSelectionRange(start + startTag.length, end + startTag.length + (selection ? 0 : 4));
@@ -69,23 +71,30 @@ const QuestionEditor = ({ question, index, onChange, onDelete }) => {
                 </div>
             </div>
 
-            {/* Split View: Edit & Preview */}
+            {/* Split View */}
             <div className="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200">
-                {/* Editor Column */}
+                {/* Editor Column (Uses FAST localText) */}
                 <div className="flex flex-col h-full bg-slate-50/50">
                     <EditorToolbar onInsert={handleInsert} />
                     <textarea 
                         ref={textareaRef}
                         className="flex-1 p-4 w-full bg-transparent resize-y min-h-[150px] outline-none font-mono text-sm text-slate-700"
                         placeholder="Type your question here..."
-                        value={question.text}
-                        onChange={(e) => onChange({...question, text: e.target.value})}
+                        value={localText} 
+                        onChange={(e) => setLocalText(e.target.value)}
                     />
                 </div>
 
-                {/* Preview Column */}
+                {/* Preview Column (Uses SLOW question.text) */}
                 <div className="p-4 bg-white min-h-[150px]">
-                    <div className="text-[10px] font-bold text-slate-300 uppercase mb-2">Live Preview</div>
+                    <div className="flex justify-between items-center mb-2">
+                         <div className="text-[10px] font-bold text-slate-300 uppercase">Live Preview</div>
+                         {/* Visual indicator that we are waiting for the debounce */}
+                         {localText !== question.text && (
+                             <span className="text-[10px] text-indigo-400 font-bold animate-pulse">Refreshing...</span>
+                         )}
+                    </div>
+                    {/* This only updates when the timer fires! */}
                     <MathRenderer text={question.text || "*(Preview appears here)*"} />
                 </div>
             </div>
@@ -93,7 +102,7 @@ const QuestionEditor = ({ question, index, onChange, onDelete }) => {
     );
 };
 
-// --- Main Quiz Editor ---
+// --- MAIN EDITOR (No logic changes, just structure) ---
 export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
     if (!quiz) return null;
 
@@ -140,7 +149,6 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
                     />
                 </div>
 
-                {/* Toggles */}
                 <div className="flex flex-wrap gap-4 pt-2">
                     <button 
                         onClick={() => setQuiz({...quiz, allowShuffle: !quiz.allowShuffle})}
@@ -148,13 +156,12 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
                     >
                         <Shuffle className="w-4 h-4"/> {quiz.allowShuffle ? 'Questions Shuffled' : 'Fixed Order'}
                     </button>
-                    
                     <button 
                         onClick={() => setQuiz({...quiz, isLocked: !quiz.isLocked})}
                         className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border transition ${quiz.isLocked ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`}
                     >
                         {quiz.isLocked ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>} 
-                        {quiz.isLocked ? 'Quiz Hidden (Locked)' : 'Quiz Visible (Unlocked)'}
+                        {quiz.isLocked ? 'Quiz Hidden' : 'Quiz Visible'}
                     </button>
                 </div>
             </div>
@@ -172,7 +179,6 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
                 ))}
             </div>
 
-            {/* Add Button */}
             <button 
                 onClick={addQuestion} 
                 className="w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-slate-400 hover:text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 flex justify-center items-center gap-2 font-bold transition group"
@@ -184,4 +190,4 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
             </button>
         </div>
     );
-}
+};

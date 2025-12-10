@@ -1,99 +1,99 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
+import rehypeKatex from 'rehype-katex';
 
-// --- KaTeX Setup ---
-const useKaTeX = () => {
-  const [isLoaded, setIsLoaded] = useState(false);
-  useEffect(() => {
-    // Check for Katex existence first
-    if (window.katex) { setIsLoaded(true); return; }
-    
-    // Dynamically load the CSS
-    const link = document.createElement('link'); 
-    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"; 
-    link.rel = "stylesheet"; 
-    link.crossOrigin = "anonymous"; 
-    document.head.appendChild(link);
-    
-    // Dynamically load the JS
-    const script = document.createElement('script'); 
-    script.src = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"; 
-    script.crossOrigin = "anonymous"; 
-    script.onload = () => setIsLoaded(true); 
-    document.body.appendChild(script);
-  }, []);
-  return isLoaded;
-};
+// --- SAGE CELL COMPONENT (Stable) ---
+// We keep React.memo here as a second layer of defense
+const SageCell = React.memo(({ code }) => {
+    const nodeRef = useRef(null);
+    const [initialized, setInitialized] = useState(false);
 
-// --- Custom Markdown Parsers ---
-const parseBold = (text) => {
-    if (!text) return null;
-    const parts = text.split(/\*\*(.*?)\*\*/g);
-    if (parts.length === 1) return text;
-    return parts.map((part, i) => i % 2 === 1 ? <strong key={i} className="font-extrabold text-slate-900">{part}</strong> : part);
-};
+    useEffect(() => {
+        if (!window.sagecell) return;
+        if (initialized) return;
 
-const parseLinks = (text) => {
-    if (!text) return null;
-    const linkRegex = /\[(.*?)\]\((.*?)\)/g;
-    const parts = text.split(linkRegex);
-    if (parts.length === 1) return parseBold(text);
-    const result = [];
-    for (let i = 0; i < parts.length; i += 3) {
-        result.push(<span key={`t-${i}`}>{parseBold(parts[i])}</span>);
-        if (i + 2 < parts.length) {
-            result.push(<a key={`l-${i}`} href={parts[i+2]} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-bold mx-1">{parseBold(parts[i+1])}</a>);
+        try {
+            window.sagecell.makeSagecell({
+                inputLocation: nodeRef.current,
+                evalButtonText: 'Evaluate',
+            });
+            setInitialized(true);
+        } catch (e) {
+            console.error("Sage init error:", e);
         }
-    }
-    return result;
+    }, [initialized]);
+
+    return (
+        <div className="my-4 border border-slate-200 rounded p-1 bg-white shadow-sm not-prose">
+            <div ref={nodeRef} className="sage-compute">
+                <script type="text/x-sage">
+                    {code}
+                </script>
+            </div>
+        </div>
+    );
+}, (prev, next) => prev.code === next.code);
+
+// --- MARKDOWN COMPONENTS CONFIGURATION ---
+// MOVED OUTSIDE: This object is now static constant. 
+// It will NEVER trigger a re-render.
+const MARKDOWN_COMPONENTS = {
+    code: ({ node, inline, className, children, ...props }) => {
+        const match = /language-(\w+)/.exec(className || '');
+        const isSage = match && match[1] === 'sage';
+
+        if (!inline && isSage) {
+            const codeContent = String(children).replace(/\n$/, '');
+            return <SageCell code={codeContent} />;
+        }
+
+        return !inline ? (
+            <div className="bg-slate-100 p-3 rounded-lg overflow-x-auto my-3 border border-slate-200 font-mono text-sm">
+                <code className={className} {...props}>
+                    {children}
+                </code>
+            </div>
+        ) : (
+            <code className="bg-slate-100 px-1.5 py-0.5 rounded text-sm font-mono text-indigo-600" {...props}>
+                {children}
+            </code>
+        );
+    },
+    h1: ({node, ...props}) => <h1 className="text-2xl font-bold mt-6 mb-4 text-slate-800" {...props} />,
+    h2: ({node, ...props}) => <h2 className="text-xl font-bold mt-5 mb-3 text-slate-800" {...props} />,
+    h3: ({node, ...props}) => <h3 className="text-lg font-bold mt-4 mb-2 text-slate-800" {...props} />,
+    ul: ({node, ...props}) => <ul className="list-disc pl-6 space-y-1 mb-4" {...props} />,
+    ol: ({node, ...props}) => <ol className="list-decimal pl-6 space-y-1 mb-4" {...props} />,
+    p: ({node, ...props}) => <p className="mb-4 last:mb-0" {...props} />,
+    a: ({node, ...props}) => <a className="text-indigo-600 hover:underline font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
+    blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-indigo-200 pl-4 italic my-4 text-slate-600" {...props} />,
+    table: ({node, ...props}) => <div className="overflow-x-auto my-4"><table className="min-w-full divide-y divide-slate-200 border border-slate-200" {...props} /></div>,
+    th: ({node, ...props}) => <th className="bg-slate-50 px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider font-bold" {...props} />,
+    td: ({node, ...props}) => <td className="px-4 py-2 whitespace-nowrap text-sm text-slate-600 border-t border-slate-200" {...props} />,
+    img: ({node, ...props}) => <img className="max-w-full h-auto rounded-lg shadow-sm my-4 border border-slate-200" {...props} />,
 };
 
-const parseMarkdown = (text) => {
+// --- MAIN RENDERER ---
+// WRAPPED IN MEMO: This component will now IGNORE parent re-renders 
+// unless the 'text' prop literally changes.
+export const MathRenderer = React.memo(({ text }) => {
     if (!text) return null;
-    const imgRegex = /!\[(.*?)\]\((.*?)\)/g;
-    const parts = text.split(imgRegex);
-    if (parts.length === 1) return parseLinks(text);
-    const result = [];
-    for (let i = 0; i < parts.length; i += 3) {
-        result.push(<span key={`b-${i}`}>{parseLinks(parts[i])}</span>);
-        if (i + 2 < parts.length) {
-            result.push(<img key={`img-${i}`} src={parts[i+2]} alt={parts[i+1]} className="max-w-full h-auto rounded-lg shadow-sm my-4 border border-slate-200 block" />);
-        }
-    }
-    return result;
-};
 
-// --- Main Renderer Component ---
-export const MathRenderer = ({ text }) => {
-  const loaded = useKaTeX();
-  if (!loaded) return <span className="text-slate-400 text-xs">Loading math...</span>;
-  if (!text) return null;
-  const safeText = String(text);
-  
-  // Splits by block math ( $$...$$ )
-  const blockParts = safeText.split(/(\$\$[\s\S]*?\$\$)/g);
-  
-  return (
-    <div className="text-slate-700 leading-relaxed whitespace-pre-wrap">
-      {blockParts.map((part, index) => {
-        if (part.startsWith('$$')) {
-            // Block Math rendering
-            const math = part.slice(2, -2);
-            return <div key={index} className="my-4 text-center overflow-x-auto p-1" ref={node => { if (node && window.katex) try { window.katex.render(math, node, { displayMode: true, throwOnError: false }); } catch (e) { node.textContent = e.message; } }} />;
-        } else {
-            // Inline/Standard Markdown parsing
-            const inlineParts = part.split(/(\$[\s\S]*?\$)/g);
-            return <span key={index}>{inlineParts.map((subPart, subIndex) => {
-                if (subPart.startsWith('$')) {
-                    // Inline Math rendering ( $...$ )
-                    const math = subPart.slice(1, -1);
-                    return <span key={subIndex} className="mx-0.5 inline-block" ref={node => { if (node && window.katex) try { window.katex.render(math, node, { displayMode: false, throwOnError: false }); } catch (e) { node.textContent = e.message; } }} />;
-                } else {
-                    // Standard Markdown processing
-                    return <span key={subIndex}>{parseMarkdown(subPart)}</span>;
-                }
-            })}</span>;
-        }
-      })}
-    </div>
-  );
-};
+    return (
+        <div className="text-slate-700 leading-relaxed">
+            <ReactMarkdown
+                remarkPlugins={[remarkMath, remarkGfm]}
+                rehypePlugins={[rehypeKatex]}
+                components={MARKDOWN_COMPONENTS}
+            >
+                {text}
+            </ReactMarkdown>
+        </div>
+    );
+}, (prevProps, nextProps) => {
+    // Return TRUE if props are equal (do not re-render)
+    // Return FALSE if props changed (re-render)
+    return prevProps.text === nextProps.text;
+});
