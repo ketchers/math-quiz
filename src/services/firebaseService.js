@@ -88,5 +88,54 @@ export const useQuizzes = (userId) => {
     return quizzes;
 };
 
+// Tracks a student's submissions grouped by quiz for attempts and quick retake flows.
+export const useStudentSubmissions = (studentId) => {
+    const [summaryByQuiz, setSummaryByQuiz] = useState({});
+
+    useEffect(() => {
+        if (!db || !studentId) return;
+
+        const submissionsQuery = query(
+            collection(db, 'submissions'),
+            where('studentId', '==', studentId)
+        );
+
+        const unsub = onSnapshot(submissionsQuery, (snap) => {
+            const nextSummary = {};
+
+            snap.docs.forEach((submissionDoc) => {
+                const data = submissionDoc.data();
+                const quizId = data.quizId;
+                if (!quizId) return;
+
+                const attemptNumber = Number(data.attemptNumber || 0);
+
+                if (!nextSummary[quizId]) {
+                    nextSummary[quizId] = {
+                        count: 0,
+                        latestAttemptNumber: 0,
+                        latestAnswers: {},
+                        latestEvaluations: {},
+                    };
+                }
+
+                nextSummary[quizId].count += 1;
+
+                if (attemptNumber >= nextSummary[quizId].latestAttemptNumber) {
+                    nextSummary[quizId].latestAttemptNumber = attemptNumber;
+                    nextSummary[quizId].latestAnswers = data.answers || {};
+                    nextSummary[quizId].latestEvaluations = data.evaluations || {};
+                }
+            });
+
+            setSummaryByQuiz(nextSummary);
+        });
+
+        return () => unsub();
+    }, [studentId]);
+
+    return summaryByQuiz;
+};
+
 // Exporting DB functions for use in other components
 export { collection, doc, setDoc, addDoc, deleteDoc, onSnapshot, query, where, getDocs };

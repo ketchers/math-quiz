@@ -1,15 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { BookOpen, LogOut, CheckCircle, XCircle, Loader2, RefreshCw, Eye, EyeOff, Lock, Shuffle, AlertTriangle, LayoutList } from 'lucide-react';
-import { doc, setDoc, deleteDoc, db, useQuizzes, getDocs, collection, query, where } from '../../services/firebaseService';
+import React, { useState } from 'react';
+import { BookOpen, LogOut, CheckCircle, XCircle, Loader2, Shuffle, AlertTriangle, LayoutList } from 'lucide-react';
+import { addDoc, collection, db, useQuizzes, useStudentSubmissions } from '../../services/firebaseService';
 import { gradeSubmission } from '../../services/aiService';
 import { MathRenderer } from '../Editor/MathRenderer';
-
-// We will use this in the next step to securely log results
-// import { addDoc, collection, db } from '../../services/firebaseService';
 
 const StudentView = ({ user, handleLogout }) => {
     // Fetches all available quizzes
     const allQuizzes = useQuizzes(user.uid);
+    const submissionSummary = useStudentSubmissions(user.uid);
     // Filter to only show unlocked quizzes
     const quizzes = allQuizzes.filter(q => !q.isLocked);
 
@@ -21,12 +19,32 @@ const StudentView = ({ user, handleLogout }) => {
     const [viewingResult, setViewingResult] = useState(false);
     const [shuffledQuestions, setShuffledQuestions] = useState([]);
 
+    const getMaxAttempts = (quiz) => {
+        const raw = Number(quiz?.maxAttempts ?? 1);
+        return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
+    };
+
+    const getAttemptInfo = (quiz) => {
+        const maxAttempts = getMaxAttempts(quiz);
+        const usedAttempts = submissionSummary?.[quiz.id]?.count || 0;
+        const remainingAttempts = Math.max(0, maxAttempts - usedAttempts);
+        return { maxAttempts, usedAttempts, remainingAttempts };
+    };
+
     // --- Quiz Lifecycle ---
 
     const startQuiz = (quiz) => {
+        const { remainingAttempts } = getAttemptInfo(quiz);
+        if (remainingAttempts <= 0) {
+            alert('No attempts remaining for this quiz.');
+            return;
+        }
+
         // Reset state for new quiz
         setActiveQuiz(quiz);
-        setStudentAnswers({});
+        const latestAnswers = submissionSummary?.[quiz.id]?.latestAnswers || {};
+        const shouldPrefill = !!quiz.prefillFromLastAttempt;
+        setStudentAnswers(shouldPrefill ? latestAnswers : {});
         setGradingResult(null);
         setViewingResult(false);
 
@@ -43,6 +61,11 @@ const StudentView = ({ user, handleLogout }) => {
 
     const submitQuiz = async () => {
         if (!activeQuiz || isSubmitting) return;
+        const { maxAttempts, usedAttempts, remainingAttempts } = getAttemptInfo(activeQuiz);
+        if (remainingAttempts <= 0) {
+            alert('Attempt limit reached for this quiz.');
+            return;
+        }
 
         // Simple check to ensure all questions were attempted
         const answeredCount = Object.keys(studentAnswers).filter(key => studentAnswers[key].trim() !== '').length;
@@ -62,8 +85,24 @@ const StudentView = ({ user, handleLogout }) => {
             setGradingResult(gradingData.evaluations);
             setViewingResult(true);
             setView('results');
+            const attemptNumber = usedAttempts + 1;
 
-            // TODO: In the next step, we will log this result to Firebase
+            try {
+                await addDoc(collection(db, 'submissions'), {
+                    quizId: activeQuiz.id,
+                    quizTitle: activeQuiz.title,
+                    studentId: user.uid,
+                    studentEmail: user.email || '',
+                    studentName: user.displayName || user.email || '',
+                    answers: studentAnswers,
+                    evaluations: gradingData.evaluations,
+                    attemptNumber,
+                    maxAttemptsAtSubmission: maxAttempts,
+                    attemptedAt: new Date().toISOString(),
+                });
+            } catch (saveError) {
+                console.error('Failed to save submission:', saveError);
+            }
         }
 
         setIsSubmitting(false);
@@ -94,6 +133,11 @@ const StudentView = ({ user, handleLogout }) => {
                 ) : (
                     quizzes.map((quiz) => (
                         <div key={quiz.id} className="bg-white p-6 rounded-xl shadow-lg border border-slate-100 hover:shadow-xl transition flex flex-col justify-between">
+                            {(() => {
+                                const { maxAttempts, usedAttempts, remainingAttempts } = getAttemptInfo(quiz);
+                                const attemptsExhausted = remainingAttempts <= 0;
+                                return (
+                                    <>
                             <div>
                                 <h3 className="text-xl font-bold text-slate-800 mb-2 truncate">{quiz.title}</h3>
                                 <p className="text-sm text-slate-500 mb-4 line-clamp-2">{quiz.description}</p>
@@ -106,13 +150,26 @@ const StudentView = ({ user, handleLogout }) => {
                                         {quiz.allowShuffle ? <Shuffle className="w-4 h-4 text-orange-500" /> : <LayoutList className="w-4 h-4 text-slate-500" />}
                                         <span>{quiz.allowShuffle ? 'Questions are shuffled' : 'Fixed order'}</span>
                                     </div>
+                                    <div className="flex items-center gap-2">
+                                        <CheckCircle className={`w-4 h-4 ${attemptsExhausted ? 'text-red-500' : 'text-green-500'}`} />
+                                        <span>
+                                            Attempts: {usedAttempts}/{maxAttempts} ({remainingAttempts} remaining)
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                             <div className="mt-4 flex gap-2 pt-4 border-t border-slate-100">
-                                <button onClick={() => startQuiz(quiz)} className="flex-1 flex items-center justify-center p-3 bg-indigo-500 text-white rounded-lg font-semibold hover:bg-indigo-600 transition text-sm">
-                                    <BookOpen className="w-4 h-4 mr-2" /> Start Quiz
+                                <button
+                                    onClick={() => startQuiz(quiz)}
+                                    disabled={attemptsExhausted}
+                                    className={`flex-1 flex items-center justify-center p-3 rounded-lg font-semibold transition text-sm ${attemptsExhausted ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-indigo-500 text-white hover:bg-indigo-600'}`}
+                                >
+                                    <BookOpen className="w-4 h-4 mr-2" /> {attemptsExhausted ? 'No Attempts Left' : 'Start Quiz'}
                                 </button>
                             </div>
+                                    </>
+                                );
+                            })()}
                         </div>
                     ))
                 )}

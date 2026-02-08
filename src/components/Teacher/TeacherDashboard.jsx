@@ -1,7 +1,36 @@
 import React, { useState } from 'react';
 import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Upload } from 'lucide-react';
-import { doc, setDoc, deleteDoc, db, useQuizzes, addDoc, collection } from '../../services/firebaseService';
+import { doc, setDoc, deleteDoc, db, useQuizzes, collection } from '../../services/firebaseService';
 import { MathEditor } from '../Editor/MathEditor';
+
+const buildQuizPayload = (quiz, user) => {
+    const normalizedQuestions = Array.isArray(quiz.questions)
+        ? quiz.questions.map((question, index) => ({
+            id: question?.id || `q-${Date.now()}-${index}`,
+            text: question?.text || '',
+            showFeedback: !!question?.showFeedback,
+        }))
+        : [];
+
+    const parsedAttempts = Number(quiz.maxAttempts ?? 1);
+    const maxAttempts = Number.isFinite(parsedAttempts) && parsedAttempts > 0
+        ? Math.floor(parsedAttempts)
+        : 1;
+
+    return {
+        title: quiz.title || 'Untitled Quiz',
+        description: quiz.description || '',
+        isLocked: !!quiz.isLocked,
+        maxAttempts,
+        prefillFromLastAttempt: !!quiz.prefillFromLastAttempt,
+        questions: normalizedQuestions,
+        allowShuffle: quiz.allowShuffle !== false,
+        allowReview: quiz.allowReview !== false,
+        teacherId: user.uid,
+        teacherName: user.displayName || user.email || '',
+        updatedAt: new Date().toISOString(),
+    };
+};
 
 export const TeacherDashboard = ({ user, handleLogout }) => {
     const quizzes = useQuizzes(user.uid);
@@ -16,6 +45,8 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
             title: 'New Quiz Title',
             description: 'A brief description of this math quiz.',
             isLocked: false,
+            maxAttempts: 1,
+            prefillFromLastAttempt: false,
             questions: [
                 { id: 'q-' + Date.now(), text: 'What is the value of $x$ in the equation $2x + 5 = 15$?', showFeedback: true }
             ],
@@ -35,17 +66,20 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
     const saveQuiz = async () => {
         if (!activeQuiz || !db) return;
         setIsSaving(true);
-        const quizData = { ...activeQuiz };
+        const quizData = buildQuizPayload(activeQuiz, user);
 
         try {
+            if (view === 'edit' && activeQuiz.teacherId && activeQuiz.teacherId !== user.uid) {
+                throw new Error('You can only edit quizzes you own.');
+            }
+
             if (view === 'new') {
-                // Create a new document in the 'quizzes' collection
-                // We use setDoc with a custom ID or addDoc for auto-ID
-                // Let's use setDoc with a timestamp for simplicity in this example, or addDoc
                 const newRef = doc(collection(db, "quizzes"));
-                await setDoc(newRef, quizData);
+                await setDoc(newRef, {
+                    ...quizData,
+                    createdAt: new Date().toISOString(),
+                });
             } else {
-                // Update existing
                 await setDoc(doc(db, 'quizzes', activeQuiz.id), quizData);
             }
             alert('Quiz saved successfully!');
@@ -53,7 +87,15 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
             setActiveQuiz(null);
         } catch (error) {
             console.error('Error saving quiz:', error);
-            alert('Failed to save quiz.');
+            const permissionDenied =
+                error?.code === 'permission-denied' ||
+                String(error?.message || '').toLowerCase().includes('missing or insufficient permissions');
+
+            if (permissionDenied) {
+                alert('Failed to save quiz: Firestore rules denied write access. Ensure your signed-in teacher account is allowed to write to the quizzes collection.');
+            } else {
+                alert(`Failed to save quiz: ${error?.message || 'Unknown error'}`);
+            }
         } finally {
             setIsSaving(false);
         }
@@ -101,6 +143,10 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                                     <div className="flex items-center gap-2">
                                         {quiz.isLocked ? <Lock className="w-4 h-4 text-red-500" /> : <BookOpen className="w-4 h-4 text-green-500" />}
                                         <span>{quiz.isLocked ? 'Locked' : 'Active'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Shuffle className="w-4 h-4 text-amber-500" />
+                                        <span>Max Attempts: {quiz.maxAttempts ?? 1}</span>
                                     </div>
                                 </div>
                             </div>

@@ -150,6 +150,26 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
                 </div>
 
                 <div className="flex flex-wrap gap-4 pt-2">
+                    <label className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border bg-white text-slate-600 border-slate-200">
+                        Max Attempts
+                        <input
+                            type="number"
+                            min={1}
+                            className="w-16 text-center border border-slate-300 rounded px-2 py-1 text-sm"
+                            value={quiz.maxAttempts ?? 1}
+                            onChange={(e) => {
+                                const parsed = Number(e.target.value);
+                                const safeValue = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 1;
+                                setQuiz({ ...quiz, maxAttempts: safeValue });
+                            }}
+                        />
+                    </label>
+                    <button
+                        onClick={() => setQuiz({ ...quiz, prefillFromLastAttempt: !quiz.prefillFromLastAttempt })}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border transition ${quiz.prefillFromLastAttempt ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white text-slate-500 border-slate-200'}`}
+                    >
+                        {quiz.prefillFromLastAttempt ? 'Prefill Enabled' : 'Prefill Disabled'}
+                    </button>
                     <button 
                         onClick={() => setQuiz({...quiz, allowShuffle: !quiz.allowShuffle})}
                         className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border transition ${quiz.allowShuffle ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-500 border-slate-200'}`}
