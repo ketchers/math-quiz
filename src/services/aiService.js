@@ -13,7 +13,14 @@ export const gradeSubmission = async (quiz, answers) => {
     });
 
     if (!response.ok) {
-      throw new Error(`Server Error: ${response.status}`);
+      let details = '';
+      try {
+        const errorPayload = await response.json();
+        details = errorPayload?.error ? ` - ${errorPayload.error}` : '';
+      } catch {
+        // Ignore JSON parse failures for error responses.
+      }
+      throw new Error(`Server Error: ${response.status}${details}`);
     }
 
     const data = await response.json();

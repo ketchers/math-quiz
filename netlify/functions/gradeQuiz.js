@@ -44,11 +44,40 @@ exports.handler = async function(event, context) {
 
     // 4. Call Google Gemini
     const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Updated model name for better stability
+    const configuredModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const modelCandidates = [...new Set([
+      configuredModel,
+      "gemini-flash-latest",
+      "gemini-2.0-flash",
+    ])];
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    let text = "";
+    let usedModel = "";
+    let lastError = null;
+
+    for (const modelName of modelCandidates) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        text = response.text();
+        usedModel = modelName;
+        break;
+      } catch (modelError) {
+        lastError = modelError;
+        const message = String(modelError?.message || "");
+        const status = modelError?.status || modelError?.code || "";
+        const isNotFound = status === 404 || message.includes("404") || message.toLowerCase().includes("not found");
+        console.error(`Gemini model failed: ${modelName}`, modelError);
+        if (!isNotFound) {
+          throw modelError;
+        }
+      }
+    }
+
+    if (!text) {
+      throw new Error(`All model candidates failed. Last error: ${lastError?.message || "Unknown Gemini error"}`);
+    }
 
     // 5. Clean up JSON (using your helper logic)
     const cleanJson = (text) => {
@@ -62,6 +91,9 @@ exports.handler = async function(event, context) {
     };
 
     const parsedData = cleanJson(text);
+    if (!parsedData || !parsedData.evaluations) {
+      throw new Error(`Gemini returned non-JSON or unexpected JSON shape (model: ${usedModel}).`);
+    }
 
     // 6. Return ONLY the grade to the frontend
     return {
@@ -73,7 +105,7 @@ exports.handler = async function(event, context) {
     console.error("AI Grading Error:", error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ error: error.message || "Unknown AI grading error" }),
     };
   }
 };
