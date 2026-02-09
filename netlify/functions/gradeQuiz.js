@@ -105,18 +105,36 @@ exports.handler = async function(event, context) {
       throw new Error(`All model candidates failed. Last error: ${lastError?.message || "Unknown Gemini error"}`);
     }
 
-    // 5. Clean up JSON (using your helper logic)
-    const cleanJson = (text) => {
-      let clean = text.replace(/```json|```/g, '');
+    // 5. Parse JSON with recovery for invalid backslash escapes from model output.
+    const parseJsonWithRecovery = (rawText) => {
+      const clean = String(rawText || "").replace(/```json|```/g, '').trim();
       const firstOpen = clean.indexOf('{');
       const lastClose = clean.lastIndexOf('}');
-      if (firstOpen !== -1 && lastClose !== -1) {
-          return JSON.parse(clean.substring(firstOpen, lastClose + 1));
+      if (firstOpen === -1 || lastClose === -1 || lastClose <= firstOpen) return null;
+
+      const candidate = clean.substring(firstOpen, lastClose + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch (firstErr) {
+        // Common failure: model emits LaTeX-like backslashes in string fields (e.g. \frac),
+        // which are invalid JSON escapes. Escape only invalid sequences and retry.
+        const repaired = candidate
+          .replace(/\r/g, '')
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+          .replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+        try {
+          return JSON.parse(repaired);
+        } catch (secondErr) {
+          console.error("Failed to parse Gemini JSON response after repair.", {
+            firstError: firstErr?.message,
+            secondError: secondErr?.message,
+          });
+          return null;
+        }
       }
-      return null;
     };
 
-    const parsedData = cleanJson(text);
+    const parsedData = parseJsonWithRecovery(text);
     if (!parsedData || !parsedData.evaluations) {
       throw new Error(`Gemini returned non-JSON or unexpected JSON shape (model: ${usedModel}).`);
     }
