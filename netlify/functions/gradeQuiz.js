@@ -14,19 +14,25 @@ exports.handler = async function(event, context) {
   }
 
   try {
+    const startedAt = Date.now();
     const data = JSON.parse(event.body);
     const { quizTitle, questions, studentAnswers } = data;
+    const safeQuestions = Array.isArray(questions) ? questions.slice(0, 20) : [];
+    const truncate = (value, max = 1200) => {
+      const text = String(value || "");
+      return text.length > max ? `${text.slice(0, max)}...` : text;
+    };
 
     // 3. Reconstruct the Prompt (Moved from App.jsx)
     const prompt = `
       You are a math teacher grading a quiz.
-      Quiz Title: ${quizTitle}
+      Quiz Title: ${truncate(quizTitle, 200)}
 
       Questions & Student Answers:
-      ${questions.map(q => `
+      ${safeQuestions.map(q => `
         [ID: "${q.id}"]
-        Question: ${q.text}
-        Student Answer: ${studentAnswers[q.id] || "No answer provided"}
+        Question: ${truncate(q.text, 1200)}
+        Student Answer: ${truncate(studentAnswers[q.id] || "No answer provided", 1200)}
       `).join('\n----------------\n')}
 
       INSTRUCTIONS:
@@ -44,12 +50,25 @@ exports.handler = async function(event, context) {
 
     // 4. Call Google Gemini
     const genAI = new GoogleGenerativeAI(API_KEY);
-    const configuredModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const configuredModel = process.env.GEMINI_MODEL || "gemini-2.0-flash-lite";
     const modelCandidates = [...new Set([
       configuredModel,
-      "gemini-flash-latest",
       "gemini-2.0-flash",
     ])];
+    const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 7000);
+    const withTimeout = async (promise, timeoutMs, label) => {
+      let timeoutHandle;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms (${label})`)), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
+    };
 
     let text = "";
     let usedModel = "";
@@ -57,8 +76,15 @@ exports.handler = async function(event, context) {
 
     for (const modelName of modelCandidates) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(prompt);
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1200,
+            responseMimeType: "application/json",
+          },
+        });
+        const result = await withTimeout(model.generateContent(prompt), GEMINI_TIMEOUT_MS, `model ${modelName}`);
         const response = await result.response;
         text = response.text();
         usedModel = modelName;
@@ -96,6 +122,7 @@ exports.handler = async function(event, context) {
     }
 
     // 6. Return ONLY the grade to the frontend
+    console.log(`AI grading success with ${usedModel} in ${Date.now() - startedAt}ms`);
     return {
       statusCode: 200,
       body: JSON.stringify(parsedData),

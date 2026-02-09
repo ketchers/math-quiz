@@ -28,7 +28,13 @@ export const gradeSubmission = async (quiz, answers) => {
 
   } catch (error) {
     console.error("Grading Service Error:", error);
-    alert("Grading failed. Please try again or contact the instructor.");
+    const message = String(error?.message || '');
+    const isTimeout = message.includes('504') || message.toLowerCase().includes('timeout');
+    alert(
+      isTimeout
+        ? "AI grading timed out on the server. Your submission was saved for teacher review."
+        : "Grading failed. Please try again or contact the instructor."
+    );
     return null;
   }
 };
