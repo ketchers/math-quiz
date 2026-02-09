@@ -137,5 +137,45 @@ export const useStudentSubmissions = (studentId) => {
     return summaryByQuiz;
 };
 
+// Provides submissions for quizzes owned by the current teacher.
+export const useTeacherSubmissions = (teacherId) => {
+    const [submissions, setSubmissions] = useState([]);
+
+    useEffect(() => {
+        if (!db || !teacherId) return;
+        let unsubSubmissions = () => {};
+
+        const quizzesQuery = query(
+            collection(db, 'quizzes'),
+            where('teacherId', '==', teacherId)
+        );
+
+        const unsubQuizzes = onSnapshot(quizzesQuery, (quizSnap) => {
+            const quizIdSet = new Set(quizSnap.docs.map((quizDoc) => quizDoc.id));
+
+            unsubSubmissions();
+            unsubSubmissions = onSnapshot(collection(db, 'submissions'), (submissionSnap) => {
+                const teacherSubmissions = submissionSnap.docs
+                    .map((submissionDoc) => ({ id: submissionDoc.id, ...submissionDoc.data() }))
+                    .filter((submission) => quizIdSet.has(submission.quizId))
+                    .sort((a, b) => {
+                        const aTime = new Date(a.attemptedAt || 0).getTime();
+                        const bTime = new Date(b.attemptedAt || 0).getTime();
+                        return bTime - aTime;
+                    });
+
+                setSubmissions(teacherSubmissions);
+            });
+        });
+
+        return () => {
+            unsubSubmissions();
+            unsubQuizzes();
+        };
+    }, [teacherId]);
+
+    return submissions;
+};
+
 // Exporting DB functions for use in other components
 export { collection, doc, setDoc, addDoc, deleteDoc, onSnapshot, query, where, getDocs };

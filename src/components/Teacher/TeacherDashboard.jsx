@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Upload } from 'lucide-react';
-import { doc, setDoc, deleteDoc, db, useQuizzes, collection } from '../../services/firebaseService';
+import { doc, setDoc, deleteDoc, db, useQuizzes, useTeacherSubmissions, collection } from '../../services/firebaseService';
 import { MathEditor } from '../Editor/MathEditor';
 
 const buildQuizPayload = (quiz, user) => {
@@ -34,6 +34,7 @@ const buildQuizPayload = (quiz, user) => {
 
 export const TeacherDashboard = ({ user, handleLogout }) => {
     const quizzes = useQuizzes(user.uid);
+    const submissions = useTeacherSubmissions(user.uid);
     const [view, setView] = useState('list'); // 'list', 'edit', 'new'
     const [activeQuiz, setActiveQuiz] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -160,6 +161,33 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                             </div>
                         </div>
                     ))
+                )}
+            </div>
+
+            <div className="mt-8 bg-white rounded-xl shadow-lg border border-slate-100">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                    <h3 className="text-xl font-bold text-slate-800">Recent Student Submissions</h3>
+                    <span className="text-sm text-slate-500">{submissions.length} total</span>
+                </div>
+
+                {submissions.length === 0 ? (
+                    <div className="p-6 text-sm text-slate-500">No submissions yet for your quizzes.</div>
+                ) : (
+                    <div className="divide-y divide-slate-100">
+                        {submissions.slice(0, 10).map((submission) => (
+                            <div key={submission.id} className="p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                <div>
+                                    <div className="font-semibold text-slate-800">{submission.quizTitle || 'Untitled Quiz'}</div>
+                                    <div className="text-sm text-slate-600">
+                                        {submission.studentName || submission.studentEmail || 'Unknown Student'} • Attempt {submission.attemptNumber || 1}
+                                    </div>
+                                </div>
+                                <div className="text-sm text-slate-600">
+                                    {submission.gradeStatus === 'needs_teacher_review' ? 'Needs teacher review' : 'AI graded'} • {submission.attemptedAt ? new Date(submission.attemptedAt).toLocaleString() : 'Unknown time'}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
         </div>

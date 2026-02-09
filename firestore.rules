@@ -16,9 +16,13 @@ service cloud.firestore {
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.questions is list;
 
-      allow update, delete: if isTeacher()
+      allow update: if isTeacher()
         && resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherId == request.auth.uid;
+
+      // Deletes do not include request.resource; check ownership from existing doc.
+      allow delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
     }
 
     match /submissions/{submissionId} {

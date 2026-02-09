@@ -31,6 +31,18 @@ const StudentView = ({ user, handleLogout }) => {
         return { maxAttempts, usedAttempts, remainingAttempts };
     };
 
+    const buildFallbackEvaluations = (quiz) => {
+        const fallback = {};
+        (quiz?.questions || []).forEach((question) => {
+            if (!question?.id) return;
+            fallback[question.id] = {
+                isCorrect: false,
+                feedback: 'AI grading is unavailable. Your answer was saved and needs teacher review.',
+            };
+        });
+        return fallback;
+    };
+
     // --- Quiz Lifecycle ---
 
     const startQuiz = (quiz) => {
@@ -80,30 +92,34 @@ const StudentView = ({ user, handleLogout }) => {
 
         // Call the secure serverless function
         const gradingData = await gradeSubmission(activeQuiz, studentAnswers);
+        const evaluations = gradingData?.evaluations || buildFallbackEvaluations(activeQuiz);
+        const gradeStatus = gradingData?.evaluations ? 'graded' : 'needs_teacher_review';
+        const attemptNumber = usedAttempts + 1;
 
-        if (gradingData && gradingData.evaluations) {
-            setGradingResult(gradingData.evaluations);
-            setViewingResult(true);
-            setView('results');
-            const attemptNumber = usedAttempts + 1;
-
-            try {
-                await addDoc(collection(db, 'submissions'), {
-                    quizId: activeQuiz.id,
-                    quizTitle: activeQuiz.title,
-                    studentId: user.uid,
-                    studentEmail: user.email || '',
-                    studentName: user.displayName || user.email || '',
-                    answers: studentAnswers,
-                    evaluations: gradingData.evaluations,
-                    attemptNumber,
-                    maxAttemptsAtSubmission: maxAttempts,
-                    attemptedAt: new Date().toISOString(),
-                });
-            } catch (saveError) {
-                console.error('Failed to save submission:', saveError);
-            }
+        try {
+            await addDoc(collection(db, 'submissions'), {
+                quizId: activeQuiz.id,
+                quizTitle: activeQuiz.title,
+                studentId: user.uid,
+                studentEmail: user.email || '',
+                studentName: user.displayName || user.email || '',
+                answers: studentAnswers,
+                evaluations,
+                gradeStatus,
+                attemptNumber,
+                maxAttemptsAtSubmission: maxAttempts,
+                attemptedAt: new Date().toISOString(),
+            });
+        } catch (saveError) {
+            console.error('Failed to save submission:', saveError);
+            alert('Your answers could not be saved. Please retry submission.');
+            setIsSubmitting(false);
+            return;
         }
+
+        setGradingResult(evaluations);
+        setViewingResult(true);
+        setView('results');
 
         setIsSubmitting(false);
     };
