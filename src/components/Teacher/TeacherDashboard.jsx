@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Upload } from 'lucide-react';
+import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Eye } from 'lucide-react';
 import { doc, setDoc, deleteDoc, db, useQuizzes, useTeacherSubmissions, collection } from '../../services/firebaseService';
 import { MathEditor } from '../Editor/MathEditor';
+import { MathRenderer } from '../Editor/MathRenderer';
 
 const buildQuizPayload = (quiz, user) => {
     const normalizedQuestions = Array.isArray(quiz.questions)
@@ -35,8 +36,9 @@ const buildQuizPayload = (quiz, user) => {
 export const TeacherDashboard = ({ user, handleLogout }) => {
     const quizzes = useQuizzes(user.uid);
     const submissions = useTeacherSubmissions(user.uid);
-    const [view, setView] = useState('list'); // 'list', 'edit', 'new'
+    const [view, setView] = useState('list'); // 'list', 'edit', 'new', 'submission'
     const [activeQuiz, setActiveQuiz] = useState(null);
+    const [activeSubmission, setActiveSubmission] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
 
     // --- CRUD Operations ---
@@ -64,6 +66,11 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
         setView('edit');
     };
 
+    const startReviewSubmission = (submission) => {
+        setActiveSubmission(submission);
+        setView('submission');
+    };
+
     const saveQuiz = async () => {
         if (!activeQuiz || !db) return;
         setIsSaving(true);
@@ -75,7 +82,7 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
             }
 
             if (view === 'new') {
-                const newRef = doc(collection(db, "quizzes"));
+                const newRef = doc(collection(db, 'quizzes'));
                 await setDoc(newRef, {
                     ...quizData,
                     createdAt: new Date().toISOString(),
@@ -179,11 +186,19 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                                 <div>
                                     <div className="font-semibold text-slate-800">{submission.quizTitle || 'Untitled Quiz'}</div>
                                     <div className="text-sm text-slate-600">
-                                        {submission.studentName || submission.studentEmail || 'Unknown Student'} • Attempt {submission.attemptNumber || 1}
+                                        {submission.studentName || submission.studentEmail || 'Unknown Student'} - Attempt {submission.attemptNumber || 1}
                                     </div>
                                 </div>
-                                <div className="text-sm text-slate-600">
-                                    {submission.gradeStatus === 'needs_teacher_review' ? 'Needs teacher review' : 'AI graded'} • {submission.attemptedAt ? new Date(submission.attemptedAt).toLocaleString() : 'Unknown time'}
+                                <div className="flex items-center gap-3">
+                                    <div className="text-sm text-slate-600">
+                                        {submission.gradeStatus === 'needs_teacher_review' ? 'Needs teacher review' : 'AI graded'} - {submission.attemptedAt ? new Date(submission.attemptedAt).toLocaleString() : 'Unknown time'}
+                                    </div>
+                                    <button
+                                        onClick={() => startReviewSubmission(submission)}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg font-semibold hover:bg-indigo-100 transition text-sm"
+                                    >
+                                        <Eye className="w-4 h-4" /> Review
+                                    </button>
                                 </div>
                             </div>
                         ))}
@@ -192,6 +207,73 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
             </div>
         </div>
     );
+
+    const renderSubmissionReview = () => {
+        if (!activeSubmission) return null;
+
+        const sourceQuiz = quizzes.find((quiz) => quiz.id === activeSubmission.quizId);
+        const questions = Array.isArray(sourceQuiz?.questions) ? sourceQuiz.questions : [];
+        const questionList = questions.length > 0
+            ? questions
+            : Object.keys(activeSubmission.answers || {}).map((id) => ({ id, text: `Question ID: ${id}` }));
+
+        return (
+            <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-3xl font-extrabold text-slate-800">Submission Review</h2>
+                    <button onClick={() => setView('list')} className="flex items-center gap-2 py-2 px-4 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition font-semibold">
+                        <Users className="w-5 h-5" /> Back to Dashboard
+                    </button>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-lg border border-slate-100 p-6 space-y-2">
+                    <div className="text-lg font-bold text-slate-800">{activeSubmission.quizTitle || 'Untitled Quiz'}</div>
+                    <div className="text-sm text-slate-600">Student: {activeSubmission.studentName || activeSubmission.studentEmail || 'Unknown Student'}</div>
+                    <div className="text-sm text-slate-600">Attempt: {activeSubmission.attemptNumber || 1}</div>
+                    <div className="text-sm text-slate-600">Status: {activeSubmission.gradeStatus === 'needs_teacher_review' ? 'Needs teacher review' : 'AI graded'}</div>
+                    <div className="text-sm text-slate-600">Submitted: {activeSubmission.attemptedAt ? new Date(activeSubmission.attemptedAt).toLocaleString() : 'Unknown time'}</div>
+                </div>
+
+                <div className="space-y-4">
+                    {questions.length === 0 ? (
+                        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 text-sm">
+                            Could not load the original quiz questions for this submission. Student answers are shown below by question id.
+                        </div>
+                    ) : null}
+
+                    {questionList.map((question, index) => {
+                        const answerText = activeSubmission.answers?.[question.id] || '';
+                        const evaluation = activeSubmission.evaluations?.[question.id];
+
+                        return (
+                            <div key={question.id || `q-${index}`} className="bg-white rounded-xl shadow-lg border border-slate-100 p-6 space-y-4">
+                                <div>
+                                    <div className="text-sm font-semibold text-slate-500 mb-2">Question {index + 1}</div>
+                                    <div className="p-4 border border-slate-200 rounded-lg bg-slate-50">
+                                        <MathRenderer text={question.text || ''} />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="text-sm font-semibold text-slate-500 mb-2">Student Answer</div>
+                                    <div className="p-4 border border-slate-200 rounded-lg bg-white">
+                                        {answerText.trim() ? <MathRenderer text={answerText} /> : <span className="text-slate-500 text-sm">No answer provided.</span>}
+                                    </div>
+                                </div>
+
+                                {evaluation ? (
+                                    <div className={`p-4 rounded-lg border text-sm ${evaluation.isCorrect ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                                        <div className="font-semibold">{evaluation.isCorrect ? 'Marked Correct' : 'Marked Needs Review'}</div>
+                                        <div className="mt-1">{evaluation.feedback || 'No feedback available.'}</div>
+                                    </div>
+                                ) : null}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
 
     const renderQuizEditor = () => (
         <div className="space-y-6">
@@ -208,10 +290,10 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                 </div>
             </h2>
 
-            <MathEditor 
-                quiz={activeQuiz} 
-                setQuiz={setActiveQuiz} 
-                isTeacher={true} 
+            <MathEditor
+                quiz={activeQuiz}
+                setQuiz={setActiveQuiz}
+                isTeacher={true}
             />
         </div>
     );
@@ -225,7 +307,7 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                         <h1 className="text-2xl font-extrabold text-slate-800">Teacher Dashboard</h1>
                     </div>
                     <div className="flex items-center gap-4">
-                         <span className="text-sm font-semibold text-slate-600 hidden sm:block">{user.displayName || user.email}</span>
+                        <span className="text-sm font-semibold text-slate-600 hidden sm:block">{user.displayName || user.email}</span>
                         <button onClick={handleLogout} className="bg-red-50 text-red-700 p-2 rounded-lg hover:bg-red-100 transition">
                             <LogOut className="w-5 h-5" />
                         </button>
@@ -236,6 +318,7 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {view === 'list' && renderQuizList()}
                 {(view === 'edit' || view === 'new') && activeQuiz && renderQuizEditor()}
+                {view === 'submission' && activeSubmission && renderSubmissionReview()}
             </main>
         </div>
     );
