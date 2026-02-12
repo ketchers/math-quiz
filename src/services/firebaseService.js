@@ -17,7 +17,25 @@ const FIREBASE_CONFIG = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
 };
 
-export const TEACHER_EMAIL = import.meta.env.VITE_TEACHER_EMAIL || "";
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+export const PRIMARY_TEACHER_EMAIL = normalizeEmail(import.meta.env.VITE_TEACHER_EMAIL || "");
+
+const parsedTeacherEmails = (() => {
+  const rawTeacherList = import.meta.env.VITE_TEACHER_EMAILS || "";
+  const splitEmails = rawTeacherList
+    .split(',')
+    .map((value) => normalizeEmail(value))
+    .filter(Boolean);
+
+  if (PRIMARY_TEACHER_EMAIL) {
+    splitEmails.push(PRIMARY_TEACHER_EMAIL);
+  }
+
+  return Array.from(new Set(splitEmails));
+})();
+
+const configuredTeacherEmailSet = new Set(parsedTeacherEmails);
+export const TEACHER_EMAIL = PRIMARY_TEACHER_EMAIL;
 
 // ==================================================================================
 // INITIALIZATION
@@ -73,6 +91,37 @@ export const handleLogin = async () => {
 export const handleLogout = async () => {
     if (!auth) return;
     await signOut(auth);
+};
+
+export const useTeacherRole = (user) => {
+    const userId = user?.uid || '';
+    const normalizedEmail = normalizeEmail(user?.email);
+    const isPrimaryTeacher = normalizedEmail !== '' && normalizedEmail === PRIMARY_TEACHER_EMAIL;
+    const isConfiguredTeacher = configuredTeacherEmailSet.has(normalizedEmail);
+    const [allowlistStatus, setAllowlistStatus] = useState({ email: '', isTeacher: false });
+
+    useEffect(() => {
+        if (!userId || !normalizedEmail || isConfiguredTeacher || !db) return;
+
+        const teacherRef = doc(db, 'teacherEmails', normalizedEmail);
+        const unsub = onSnapshot(
+            teacherRef,
+            (teacherDoc) => {
+                setAllowlistStatus({ email: normalizedEmail, isTeacher: teacherDoc.exists() });
+            },
+            () => {
+                setAllowlistStatus({ email: normalizedEmail, isTeacher: false });
+            }
+        );
+
+        return () => unsub();
+    }, [userId, normalizedEmail, isConfiguredTeacher]);
+
+    const isAllowlistedTeacher = allowlistStatus.email === normalizedEmail && allowlistStatus.isTeacher;
+    const isTeacher = isConfiguredTeacher || isAllowlistedTeacher;
+    const loading = !!userId && !!normalizedEmail && !isConfiguredTeacher && allowlistStatus.email !== normalizedEmail;
+
+    return { isTeacher, isPrimaryTeacher, loading };
 };
 
 // Custom hook to fetch the list of quizzes
@@ -137,6 +186,37 @@ export const useStudentSubmissions = (studentId) => {
     return summaryByQuiz;
 };
 
+export const useStudentAttempts = (studentId) => {
+    const [attempts, setAttempts] = useState([]);
+
+    useEffect(() => {
+        if (!db || !studentId) return;
+
+        const submissionsQuery = query(
+            collection(db, 'submissions'),
+            where('studentId', '==', studentId)
+        );
+
+        const unsub = onSnapshot(submissionsQuery, (snap) => {
+            const allAttempts = snap.docs
+                .map((attemptDoc) => ({ id: attemptDoc.id, ...attemptDoc.data() }))
+                .sort((a, b) => {
+                    const attemptDelta = Number(b.attemptNumber || 0) - Number(a.attemptNumber || 0);
+                    if (attemptDelta !== 0) return attemptDelta;
+                    const aTime = new Date(a.attemptedAt || 0).getTime();
+                    const bTime = new Date(b.attemptedAt || 0).getTime();
+                    return bTime - aTime;
+                });
+
+            setAttempts(allAttempts);
+        });
+
+        return () => unsub();
+    }, [studentId]);
+
+    return attempts;
+};
+
 // Provides submissions for quizzes owned by the current teacher.
 export const useTeacherSubmissions = (teacherId) => {
     const [submissions, setSubmissions] = useState([]);
@@ -175,6 +255,33 @@ export const useTeacherSubmissions = (teacherId) => {
     }, [teacherId]);
 
     return submissions;
+};
+
+export const useTeacherEmails = (enabled = true) => {
+    const [teacherEmails, setTeacherEmails] = useState([]);
+
+    useEffect(() => {
+        if (!db || !enabled) return;
+
+        const unsub = onSnapshot(
+            collection(db, 'teacherEmails'),
+            (snap) => {
+                const emails = snap.docs
+                    .map((teacherDoc) => normalizeEmail(teacherDoc.id))
+                    .filter(Boolean)
+                    .sort();
+                setTeacherEmails(emails);
+            },
+            (error) => {
+                console.error('Failed to read teacherEmails collection:', error);
+                setTeacherEmails([]);
+            }
+        );
+
+        return () => unsub();
+    }, [enabled]);
+
+    return teacherEmails;
 };
 
 // Exporting DB functions for use in other components

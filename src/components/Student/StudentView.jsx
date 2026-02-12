@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { BookOpen, LogOut, CheckCircle, XCircle, Loader2, Shuffle, AlertTriangle, LayoutList } from 'lucide-react';
-import { addDoc, collection, db, useQuizzes, useStudentSubmissions } from '../../services/firebaseService';
+import React, { useMemo, useState } from 'react';
+import { BookOpen, LogOut, CheckCircle, XCircle, Loader2, Shuffle, AlertTriangle, LayoutList, Eye } from 'lucide-react';
+import { addDoc, collection, db, useQuizzes, useStudentSubmissions, useStudentAttempts } from '../../services/firebaseService';
 import { gradeSubmission } from '../../services/aiService';
 import { MathRenderer } from '../Editor/MathRenderer';
 
@@ -8,11 +8,13 @@ const StudentView = ({ user, handleLogout }) => {
     // Fetches all available quizzes
     const allQuizzes = useQuizzes(user.uid);
     const submissionSummary = useStudentSubmissions(user.uid);
+    const submissionHistory = useStudentAttempts(user.uid);
     // Filter to only show unlocked quizzes
     const quizzes = allQuizzes.filter(q => !q.isLocked);
 
-    const [view, setView] = useState('list'); // 'list', 'quiz', 'results'
+    const [view, setView] = useState('list'); // 'list', 'quiz', 'results', 'history'
     const [activeQuiz, setActiveQuiz] = useState(null);
+    const [activeHistoryAttempt, setActiveHistoryAttempt] = useState(null);
     const [studentAnswers, setStudentAnswers] = useState({});
     const [gradingResult, setGradingResult] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,6 +45,29 @@ const StudentView = ({ user, handleLogout }) => {
         return fallback;
     };
 
+    const attemptsByQuiz = useMemo(() => {
+        const groupedAttempts = {};
+        submissionHistory.forEach((attempt) => {
+            if (!attempt?.quizId) return;
+            if (!groupedAttempts[attempt.quizId]) {
+                groupedAttempts[attempt.quizId] = [];
+            }
+            groupedAttempts[attempt.quizId].push(attempt);
+        });
+
+        Object.values(groupedAttempts).forEach((attempts) => {
+            attempts.sort((a, b) => {
+                const attemptDelta = Number(b.attemptNumber || 0) - Number(a.attemptNumber || 0);
+                if (attemptDelta !== 0) return attemptDelta;
+                const aTime = new Date(a.attemptedAt || 0).getTime();
+                const bTime = new Date(b.attemptedAt || 0).getTime();
+                return bTime - aTime;
+            });
+        });
+
+        return groupedAttempts;
+    }, [submissionHistory]);
+
     // --- Quiz Lifecycle ---
 
     const startQuiz = (quiz) => {
@@ -59,6 +84,7 @@ const StudentView = ({ user, handleLogout }) => {
         setStudentAnswers(shouldPrefill ? latestAnswers : {});
         setGradingResult(null);
         setViewingResult(false);
+        setActiveHistoryAttempt(null);
 
         // Handle shuffling
         if (quiz.allowShuffle) {
@@ -69,6 +95,19 @@ const StudentView = ({ user, handleLogout }) => {
         }
 
         setView('quiz');
+    };
+
+    const startReviewHistory = (quiz) => {
+        if (!quiz) return;
+        if (quiz.allowReview === false) {
+            alert('Your teacher has disabled attempt review for this quiz.');
+            return;
+        }
+
+        const attempts = attemptsByQuiz[quiz.id] || [];
+        setActiveQuiz(quiz);
+        setActiveHistoryAttempt(attempts[0] || null);
+        setView('history');
     };
 
     const submitQuiz = async () => {
@@ -182,6 +221,14 @@ const StudentView = ({ user, handleLogout }) => {
                                 >
                                     <BookOpen className="w-4 h-4 mr-2" /> {attemptsExhausted ? 'No Attempts Left' : 'Start Quiz'}
                                 </button>
+                                {quiz.allowReview !== false && usedAttempts > 0 ? (
+                                    <button
+                                        onClick={() => startReviewHistory(quiz)}
+                                        className="flex-1 flex items-center justify-center p-3 rounded-lg font-semibold transition text-sm bg-slate-100 text-slate-700 hover:bg-slate-200"
+                                    >
+                                        <Eye className="w-4 h-4 mr-2" /> View Attempts
+                                    </button>
+                                ) : null}
                             </div>
                                     </>
                                 );
@@ -265,6 +312,100 @@ const StudentView = ({ user, handleLogout }) => {
         </div>
     );
 
+    const renderAttemptHistory = () => {
+        if (!activeQuiz) return null;
+        const quizAttempts = attemptsByQuiz[activeQuiz.id] || [];
+        const questions = Array.isArray(activeQuiz.questions) ? activeQuiz.questions : [];
+        const questionLookup = Object.fromEntries(questions.map((question) => [question.id, question]));
+
+        return (
+            <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                        <h2 className="text-3xl font-extrabold text-slate-800">Past Attempts</h2>
+                        <p className="text-slate-600">{activeQuiz.title}</p>
+                    </div>
+                    <button
+                        onClick={() => setView('list')}
+                        className="inline-flex items-center justify-center gap-2 py-2 px-4 bg-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-300 transition"
+                    >
+                        <BookOpen className="w-5 h-5" /> Back to Quizzes
+                    </button>
+                </div>
+
+                {quizAttempts.length === 0 ? (
+                    <div className="p-6 bg-white rounded-xl shadow-lg border border-slate-200 text-slate-500">
+                        No past attempts are available for this quiz yet.
+                    </div>
+                ) : (
+                    <div className="bg-white rounded-xl shadow-lg border border-slate-100 divide-y divide-slate-100">
+                        {quizAttempts.map((attempt) => {
+                            const isSelected = activeHistoryAttempt?.id === attempt.id;
+                            return (
+                                <button
+                                    key={attempt.id}
+                                    onClick={() => setActiveHistoryAttempt(attempt)}
+                                    className={`w-full p-4 text-left transition ${isSelected ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}
+                                >
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                                        <div className="font-semibold text-slate-800">Attempt {attempt.attemptNumber || 1}</div>
+                                        <div className="text-sm text-slate-600">
+                                            {attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : 'Unknown time'}
+                                        </div>
+                                    </div>
+                                    <div className="text-sm text-slate-600 mt-1">
+                                        {attempt.gradeStatus === 'needs_teacher_review' ? 'Needs teacher review' : 'AI graded'}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {activeHistoryAttempt ? (
+                    <div className="space-y-4">
+                        {Object.keys(activeHistoryAttempt.answers || {}).length === 0 ? (
+                            <div className="p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-sm">
+                                No answers were saved for this attempt.
+                            </div>
+                        ) : null}
+
+                        {(questions.length > 0 ? questions.map((question) => question.id).filter(Boolean) : Object.keys(activeHistoryAttempt.answers || {})).map((questionId, index) => {
+                            const question = questionLookup[questionId] || { id: questionId, text: `Question ID: ${questionId}` };
+                            const answer = activeHistoryAttempt.answers?.[questionId] || '';
+                            const evaluation = activeHistoryAttempt.evaluations?.[questionId];
+
+                            return (
+                                <div key={questionId || `history-q-${index}`} className="p-6 bg-white rounded-xl shadow-lg border border-slate-100 space-y-4">
+                                    <div>
+                                        <div className="text-sm font-semibold text-slate-500 mb-2">Question {index + 1}</div>
+                                        <div className="mb-4 p-4 border border-slate-200 rounded-lg bg-slate-50">
+                                            <MathRenderer text={question.text || ''} />
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <div className="text-sm font-semibold text-slate-500 mb-2">Your Submitted Answer</div>
+                                        <div className="p-4 border border-slate-200 rounded-lg bg-white">
+                                            {answer.trim() ? <MathRenderer text={answer} /> : <span className="text-slate-500 text-sm">No answer provided.</span>}
+                                        </div>
+                                    </div>
+
+                                    {evaluation ? (
+                                        <div className={`p-4 rounded-xl text-sm border ${evaluation.isCorrect ? 'bg-green-50 text-green-800 border-green-100' : 'bg-red-50 text-red-800 border-red-100'}`}>
+                                            <div className="font-bold">{evaluation.isCorrect ? 'Correct' : 'Needs Review'}</div>
+                                            <div className="mt-1">{evaluation.feedback || 'No feedback available.'}</div>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : null}
+            </div>
+        );
+    };
+
     // --- Main Layout ---
     return (
         <div className="min-h-screen bg-slate-50">
@@ -288,6 +429,7 @@ const StudentView = ({ user, handleLogout }) => {
             <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {view === 'list' && renderQuizList()}
                 {(view === 'quiz' || view === 'results') && activeQuiz && renderQuizTaking()}
+                {view === 'history' && activeQuiz && renderAttemptHistory()}
             </main>
         </div>
     );

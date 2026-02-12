@@ -5,8 +5,32 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isTeacher() {
+    function isPrimaryTeacher() {
       return isSignedIn() && request.auth.token.email == "richard.ketchersid@gmail.com";
+    }
+
+    function isTeacherByAllowlist() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/teacherEmails/$(request.auth.token.email));
+    }
+
+    function isTeacher() {
+      return isPrimaryTeacher() || isTeacherByAllowlist();
+    }
+
+    function ownsQuiz(quizId) {
+      return quizId is string
+        && exists(/databases/$(database)/documents/quizzes/$(quizId))
+        && get(/databases/$(database)/documents/quizzes/$(quizId)).data.teacherId == request.auth.uid;
+    }
+
+    match /teacherEmails/{email} {
+      allow get: if isPrimaryTeacher()
+        || (isSignedIn() && request.auth.token.email == email);
+
+      allow list: if isPrimaryTeacher();
+
+      allow create, update, delete: if isPrimaryTeacher();
     }
 
     match /quizzes/{quizId} {
@@ -29,10 +53,13 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.studentId == request.auth.uid;
 
-      allow read: if isTeacher()
-        || (isSignedIn() && resource.data.studentId == request.auth.uid);
+      allow read: if (isSignedIn() && resource.data.studentId == request.auth.uid)
+        || (isTeacher() && ownsQuiz(resource.data.quizId));
 
-      allow update, delete: if false;
+      allow delete: if isTeacher()
+        && ownsQuiz(resource.data.quizId);
+
+      allow update: if false;
     }
 
     match /{document=**} {

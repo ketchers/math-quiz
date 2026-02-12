@@ -1,11 +1,12 @@
 import React from 'react';
 import { Loader2, BookOpen } from 'lucide-react';
-import { useAuth, handleLogin, handleLogout, TEACHER_EMAIL, isFirebaseConfigured } from './services/firebaseService';
+import { useAuth, useTeacherRole, handleLogin, handleLogout, isFirebaseConfigured } from './services/firebaseService';
 import { TeacherDashboard } from './components/Teacher/TeacherDashboard';
 import { StudentView } from './components/Student/StudentView';
 
 export default function App() {
   const { user, loading } = useAuth();
+  const { isTeacher, isPrimaryTeacher, loading: roleLoading } = useTeacherRole(user);
 
   // 1. Safety Check: Is Firebase Configured?
   if (!isFirebaseConfigured) {
@@ -20,7 +21,7 @@ export default function App() {
   }
 
   // 2. Loading State (Checking Auth)
-  if (loading) {
+  if (loading || (user && roleLoading)) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="animate-spin text-indigo-600 w-8 h-8"/>
@@ -55,8 +56,8 @@ export default function App() {
   }
 
   // 4. Authenticated Routes (Traffic Controller)
-  if (user.email === TEACHER_EMAIL) {
-    return <TeacherDashboard user={user} handleLogout={handleLogout} />;
+  if (isTeacher) {
+    return <TeacherDashboard user={user} handleLogout={handleLogout} isPrimaryTeacher={isPrimaryTeacher} />;
   } else {
     return <StudentView user={user} handleLogout={handleLogout} />;
   }

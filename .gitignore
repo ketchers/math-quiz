@@ -25,6 +25,6 @@ dist-ssr
 
 #local
 .env
-future.txt
+future.md
 steps.txt
 npm_run_dev.txt

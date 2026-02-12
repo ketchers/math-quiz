@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Eye } from 'lucide-react';
-import { doc, setDoc, deleteDoc, db, useQuizzes, useTeacherSubmissions, collection } from '../../services/firebaseService';
+import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Eye, UserPlus } from 'lucide-react';
+import { doc, setDoc, deleteDoc, db, useQuizzes, useTeacherSubmissions, useTeacherEmails, collection } from '../../services/firebaseService';
 import { MathEditor } from '../Editor/MathEditor';
 import { MathRenderer } from '../Editor/MathRenderer';
+
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
 const buildQuizPayload = (quiz, user) => {
     const normalizedQuestions = Array.isArray(quiz.questions)
@@ -33,13 +35,16 @@ const buildQuizPayload = (quiz, user) => {
     };
 };
 
-export const TeacherDashboard = ({ user, handleLogout }) => {
+export const TeacherDashboard = ({ user, handleLogout, isPrimaryTeacher = false }) => {
     const quizzes = useQuizzes(user.uid);
     const submissions = useTeacherSubmissions(user.uid);
+    const teacherEmails = useTeacherEmails(isPrimaryTeacher);
     const [view, setView] = useState('list'); // 'list', 'edit', 'new', 'submission'
     const [activeQuiz, setActiveQuiz] = useState(null);
     const [activeSubmission, setActiveSubmission] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [newTeacherEmail, setNewTeacherEmail] = useState('');
+    const [isUpdatingTeachers, setIsUpdatingTeachers] = useState(false);
 
     // --- CRUD Operations ---
 
@@ -120,6 +125,63 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
         }
     };
 
+    const deleteSubmissionAttempt = async (submission) => {
+        if (!submission?.id) return;
+        const studentLabel = submission.studentName || submission.studentEmail || 'this student';
+        const confirmed = window.confirm(`Delete Attempt ${submission.attemptNumber || 1} for ${studentLabel}? This gives the student one attempt back.`);
+        if (!confirmed) return;
+
+        try {
+            await deleteDoc(doc(db, 'submissions', submission.id));
+            if (activeSubmission?.id === submission.id) {
+                setActiveSubmission(null);
+                setView('list');
+            }
+        } catch (error) {
+            console.error('Error deleting submission attempt:', error);
+            alert('Failed to delete this attempt. Check Firestore rules for submission delete permissions.');
+        }
+    };
+
+    const addTeacherEmail = async () => {
+        const normalized = normalizeEmail(newTeacherEmail);
+        if (!normalized || !normalized.includes('@')) {
+            alert('Enter a valid teacher email address.');
+            return;
+        }
+
+        setIsUpdatingTeachers(true);
+        try {
+            await setDoc(doc(db, 'teacherEmails', normalized), {
+                email: normalized,
+                addedAt: new Date().toISOString(),
+                addedBy: user.uid,
+            });
+            setNewTeacherEmail('');
+        } catch (error) {
+            console.error('Error adding teacher email:', error);
+            alert('Failed to add teacher email.');
+        } finally {
+            setIsUpdatingTeachers(false);
+        }
+    };
+
+    const removeTeacherEmail = async (email) => {
+        const normalized = normalizeEmail(email);
+        const confirmed = window.confirm(`Remove teacher access for ${normalized}?`);
+        if (!confirmed) return;
+
+        setIsUpdatingTeachers(true);
+        try {
+            await deleteDoc(doc(db, 'teacherEmails', normalized));
+        } catch (error) {
+            console.error('Error removing teacher email:', error);
+            alert('Failed to remove teacher email.');
+        } finally {
+            setIsUpdatingTeachers(false);
+        }
+    };
+
     // --- Rendering Logic ---
 
     const renderQuizList = () => (
@@ -130,6 +192,52 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                     <Plus className="w-5 h-5" /> New Quiz
                 </button>
             </h2>
+
+            {isPrimaryTeacher ? (
+                <div className="bg-white rounded-xl shadow-lg border border-slate-100 p-5 space-y-4">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800">Teacher Access</h3>
+                        <p className="text-sm text-slate-600">Add or remove teacher emails for dashboard and quiz-authoring access.</p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-3">
+                        <input
+                            type="email"
+                            value={newTeacherEmail}
+                            onChange={(event) => setNewTeacherEmail(event.target.value)}
+                            placeholder="teacher@example.com"
+                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                        <button
+                            onClick={addTeacherEmail}
+                            disabled={isUpdatingTeachers}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-70"
+                        >
+                            {isUpdatingTeachers ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                            Add Teacher
+                        </button>
+                    </div>
+
+                    <div className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
+                        {teacherEmails.length === 0 ? (
+                            <div className="p-3 text-sm text-slate-500">No extra teacher emails are configured yet.</div>
+                        ) : (
+                            teacherEmails.map((email) => (
+                                <div key={email} className="p-3 flex items-center justify-between gap-2">
+                                    <span className="text-sm font-medium text-slate-700">{email}</span>
+                                    <button
+                                        onClick={() => removeTeacherEmail(email)}
+                                        disabled={isUpdatingTeachers}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-200 text-red-700 rounded-lg font-semibold hover:bg-red-100 disabled:opacity-70 text-sm"
+                                    >
+                                        <Trash2 className="w-4 h-4" /> Remove
+                                    </button>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            ) : null}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {quizzes.length === 0 ? (
@@ -199,6 +307,12 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
                                     >
                                         <Eye className="w-4 h-4" /> Review
                                     </button>
+                                    <button
+                                        onClick={() => deleteSubmissionAttempt(submission)}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg font-semibold hover:bg-red-100 transition text-sm"
+                                    >
+                                        <Trash2 className="w-4 h-4" /> Delete Attempt
+                                    </button>
                                 </div>
                             </div>
                         ))}
@@ -221,9 +335,17 @@ export const TeacherDashboard = ({ user, handleLogout }) => {
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <h2 className="text-3xl font-extrabold text-slate-800">Submission Review</h2>
-                    <button onClick={() => setView('list')} className="flex items-center gap-2 py-2 px-4 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition font-semibold">
-                        <Users className="w-5 h-5" /> Back to Dashboard
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => deleteSubmissionAttempt(activeSubmission)}
+                            className="flex items-center gap-2 py-2 px-4 bg-red-50 text-red-700 rounded-xl hover:bg-red-100 transition font-semibold"
+                        >
+                            <Trash2 className="w-5 h-5" /> Delete Attempt
+                        </button>
+                        <button onClick={() => setView('list')} className="flex items-center gap-2 py-2 px-4 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition font-semibold">
+                            <Users className="w-5 h-5" /> Back to Dashboard
+                        </button>
+                    </div>
                 </div>
 
                 <div className="bg-white rounded-xl shadow-lg border border-slate-100 p-6 space-y-2">
