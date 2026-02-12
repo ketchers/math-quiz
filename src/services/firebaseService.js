@@ -137,6 +137,28 @@ export const useQuizzes = (userId) => {
     return quizzes;
 };
 
+// Fetches only quizzes owned by the signed-in teacher.
+export const useTeacherQuizzes = (teacherId) => {
+    const [quizzes, setQuizzes] = useState([]);
+
+    useEffect(() => {
+        if (!db || !teacherId) return;
+
+        const ownedQuizQuery = query(
+            collection(db, 'quizzes'),
+            where('teacherId', '==', teacherId)
+        );
+
+        const unsub = onSnapshot(ownedQuizQuery, (snap) => {
+            setQuizzes(snap.docs.map((quizDoc) => ({ id: quizDoc.id, ...quizDoc.data() })));
+        });
+
+        return () => unsub();
+    }, [teacherId]);
+
+    return quizzes;
+};
+
 // Tracks a student's submissions grouped by quiz for attempts and quick retake flows.
 export const useStudentSubmissions = (studentId) => {
     const [summaryByQuiz, setSummaryByQuiz] = useState({});
@@ -223,7 +245,20 @@ export const useTeacherSubmissions = (teacherId) => {
 
     useEffect(() => {
         if (!db || !teacherId) return;
-        let unsubSubmissions = () => {};
+        let submissionUnsubs = [];
+        const submissionsByQuiz = new Map();
+
+        const emitMergedSubmissions = () => {
+            const merged = Array.from(submissionsByQuiz.values())
+                .flat()
+                .sort((a, b) => {
+                    const aTime = new Date(a.attemptedAt || 0).getTime();
+                    const bTime = new Date(b.attemptedAt || 0).getTime();
+                    return bTime - aTime;
+                });
+
+            setSubmissions(merged);
+        };
 
         const quizzesQuery = query(
             collection(db, 'quizzes'),
@@ -231,25 +266,45 @@ export const useTeacherSubmissions = (teacherId) => {
         );
 
         const unsubQuizzes = onSnapshot(quizzesQuery, (quizSnap) => {
-            const quizIdSet = new Set(quizSnap.docs.map((quizDoc) => quizDoc.id));
+            submissionUnsubs.forEach((unsub) => unsub());
+            submissionUnsubs = [];
+            submissionsByQuiz.clear();
 
-            unsubSubmissions();
-            unsubSubmissions = onSnapshot(collection(db, 'submissions'), (submissionSnap) => {
-                const teacherSubmissions = submissionSnap.docs
-                    .map((submissionDoc) => ({ id: submissionDoc.id, ...submissionDoc.data() }))
-                    .filter((submission) => quizIdSet.has(submission.quizId))
-                    .sort((a, b) => {
-                        const aTime = new Date(a.attemptedAt || 0).getTime();
-                        const bTime = new Date(b.attemptedAt || 0).getTime();
-                        return bTime - aTime;
-                    });
+            const quizIds = quizSnap.docs.map((quizDoc) => quizDoc.id);
+            if (quizIds.length === 0) {
+                setSubmissions([]);
+                return;
+            }
 
-                setSubmissions(teacherSubmissions);
+            quizIds.forEach((quizId) => {
+                const perQuizSubmissionsQuery = query(
+                    collection(db, 'submissions'),
+                    where('quizId', '==', quizId)
+                );
+
+                const unsub = onSnapshot(
+                    perQuizSubmissionsQuery,
+                    (submissionSnap) => {
+                        const rows = submissionSnap.docs.map((submissionDoc) => ({
+                            id: submissionDoc.id,
+                            ...submissionDoc.data(),
+                        }));
+                        submissionsByQuiz.set(quizId, rows);
+                        emitMergedSubmissions();
+                    },
+                    (error) => {
+                        console.error(`Error loading submissions for quiz ${quizId}:`, error);
+                        submissionsByQuiz.set(quizId, []);
+                        emitMergedSubmissions();
+                    }
+                );
+
+                submissionUnsubs.push(unsub);
             });
         });
 
         return () => {
-            unsubSubmissions();
+            submissionUnsubs.forEach((unsub) => unsub());
             unsubQuizzes();
         };
     }, [teacherId]);

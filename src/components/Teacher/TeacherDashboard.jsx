@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { BookOpen, Edit3, Plus, Trash2, Save, Users, Loader2, LogOut, LayoutList, Lock, Shuffle, Eye, UserPlus } from 'lucide-react';
-import { doc, setDoc, deleteDoc, db, useQuizzes, useTeacherSubmissions, useTeacherEmails, collection } from '../../services/firebaseService';
+import { doc, setDoc, deleteDoc, db, useTeacherQuizzes, useTeacherSubmissions, useTeacherEmails, collection } from '../../services/firebaseService';
 import { MathEditor } from '../Editor/MathEditor';
 import { MathRenderer } from '../Editor/MathRenderer';
 
@@ -36,7 +36,7 @@ const buildQuizPayload = (quiz, user) => {
 };
 
 export const TeacherDashboard = ({ user, handleLogout, isPrimaryTeacher = false }) => {
-    const quizzes = useQuizzes(user.uid);
+    const quizzes = useTeacherQuizzes(user.uid);
     const submissions = useTeacherSubmissions(user.uid);
     const teacherEmails = useTeacherEmails(isPrimaryTeacher);
     const [view, setView] = useState('list'); // 'list', 'edit', 'new', 'submission'
