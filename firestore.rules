@@ -30,8 +30,9 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/classEnrollments/$(classId + "_" + studentId));
     }
 
-    function canAccessClass(classId) {
-      return ownsClass(classId) || isEnrolled(classId, request.auth.uid);
+    function canAccessClassData(classId, classData) {
+      return classData.teacherId == request.auth.uid
+        || isEnrolled(classId, request.auth.uid);
     }
 
     function quizExists(quizId) {
@@ -85,7 +86,7 @@ service cloud.firestore {
 
     match /classes/{classId} {
       allow read: if isSignedIn()
-        && canAccessClass(classId);
+        && canAccessClassData(classId, resource.data);
 
       allow create: if isTeacher()
         && request.resource.data.teacherId == request.auth.uid
