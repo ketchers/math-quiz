@@ -64,6 +64,28 @@ export const useAuth = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const upsertUserProfile = async (currentUser) => {
+    if (!db || !currentUser?.uid) return;
+    const normalizedEmail = normalizeEmail(currentUser.email);
+
+    try {
+      await setDoc(
+        doc(db, 'userProfiles', currentUser.uid),
+        {
+          uid: currentUser.uid,
+          email: currentUser.email || '',
+          normalizedEmail,
+          displayName: currentUser.displayName || '',
+          photoURL: currentUser.photoURL || '',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error('Failed to sync user profile:', error);
+    }
+  };
+
   useEffect(() => {
     if (!auth) {
         setLoading(false); 
@@ -71,6 +93,9 @@ export const useAuth = () => {
     }
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        void upsertUserProfile(currentUser);
+      }
       setLoading(false);
     });
     return () => unsubscribe();
@@ -124,6 +149,13 @@ export const useTeacherRole = (user) => {
     return { isTeacher, isPrimaryTeacher, loading };
 };
 
+const sortClasses = (classes) =>
+    [...classes].sort((a, b) => {
+        const archivedDelta = Number(!!a.isArchived) - Number(!!b.isArchived);
+        if (archivedDelta !== 0) return archivedDelta;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+
 // Custom hook to fetch the list of quizzes
 export const useQuizzes = (userId) => {
     const [quizzes, setQuizzes] = useState([]);
@@ -134,6 +166,208 @@ export const useQuizzes = (userId) => {
         });
         return () => unsub();
     }, [userId]);
+    return quizzes;
+};
+
+export const useTeacherClasses = (teacherId) => {
+    const [classes, setClasses] = useState([]);
+
+    useEffect(() => {
+        if (!db || !teacherId) return;
+
+        const teacherClassesQuery = query(
+            collection(db, 'classes'),
+            where('teacherId', '==', teacherId)
+        );
+
+        const unsub = onSnapshot(
+            teacherClassesQuery,
+            (snap) => {
+                const rows = snap.docs.map((classDoc) => ({ id: classDoc.id, ...classDoc.data() }));
+                setClasses(sortClasses(rows));
+            },
+            (error) => {
+                console.error('Failed to load teacher classes:', error);
+                setClasses([]);
+            }
+        );
+
+        return () => unsub();
+    }, [teacherId]);
+
+    return classes;
+};
+
+export const useClassEnrollments = (classId) => {
+    const [enrollments, setEnrollments] = useState([]);
+
+    useEffect(() => {
+        if (!db || !classId) {
+            setEnrollments([]);
+            return;
+        }
+
+        const enrollmentQuery = query(
+            collection(db, 'classEnrollments'),
+            where('classId', '==', classId)
+        );
+
+        const unsub = onSnapshot(
+            enrollmentQuery,
+            (snap) => {
+                const rows = snap.docs
+                    .map((rowDoc) => ({ id: rowDoc.id, ...rowDoc.data() }))
+                    .sort((a, b) => String(a.studentEmail || '').localeCompare(String(b.studentEmail || '')));
+                setEnrollments(rows);
+            },
+            (error) => {
+                console.error('Failed to load class enrollments:', error);
+                setEnrollments([]);
+            }
+        );
+
+        return () => unsub();
+    }, [classId]);
+
+    return enrollments;
+};
+
+export const useStudentClasses = (studentId) => {
+    const [classes, setClasses] = useState([]);
+
+    useEffect(() => {
+        if (!db || !studentId) {
+            setClasses([]);
+            return;
+        }
+
+        let classListeners = [];
+        const classRowsById = new Map();
+
+        const emit = () => {
+            setClasses(sortClasses(Array.from(classRowsById.values())));
+        };
+
+        const clearClassListeners = () => {
+            classListeners.forEach((unsubscribe) => unsubscribe());
+            classListeners = [];
+            classRowsById.clear();
+        };
+
+        const subscribeToClasses = (classIds) => {
+            clearClassListeners();
+            if (classIds.length === 0) {
+                setClasses([]);
+                return;
+            }
+
+            classIds.forEach((classId) => {
+                const classRef = doc(db, 'classes', classId);
+                const unsubscribe = onSnapshot(
+                    classRef,
+                    (classDoc) => {
+                        if (classDoc.exists()) {
+                            classRowsById.set(classId, { id: classDoc.id, ...classDoc.data() });
+                        } else {
+                            classRowsById.delete(classId);
+                        }
+                        emit();
+                    },
+                    (error) => {
+                        console.error(`Failed to load class ${classId}:`, error);
+                        classRowsById.delete(classId);
+                        emit();
+                    }
+                );
+
+                classListeners.push(unsubscribe);
+            });
+        };
+
+        const enrollmentQuery = query(
+            collection(db, 'classEnrollments'),
+            where('studentId', '==', studentId)
+        );
+
+        const unsubscribeEnrollments = onSnapshot(
+            enrollmentQuery,
+            (enrollmentSnap) => {
+                const classIds = Array.from(
+                    new Set(
+                        enrollmentSnap.docs
+                            .map((enrollmentDoc) => enrollmentDoc.data()?.classId)
+                            .filter(Boolean)
+                    )
+                );
+                subscribeToClasses(classIds);
+            },
+            (error) => {
+                console.error('Failed to load student enrollments:', error);
+                subscribeToClasses([]);
+            }
+        );
+
+        return () => {
+            clearClassListeners();
+            unsubscribeEnrollments();
+        };
+    }, [studentId]);
+
+    return classes;
+};
+
+export const useQuizzesByClassIds = (classIds) => {
+    const [quizzes, setQuizzes] = useState([]);
+
+    useEffect(() => {
+        if (!db) {
+            setQuizzes([]);
+            return;
+        }
+
+        const uniqueClassIds = Array.from(new Set((classIds || []).filter(Boolean)));
+        if (uniqueClassIds.length === 0) {
+            setQuizzes([]);
+            return;
+        }
+
+        const quizzesByClass = new Map();
+        const listeners = [];
+
+        const emit = () => {
+            const merged = Array.from(quizzesByClass.values())
+                .flat()
+                .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+            setQuizzes(merged);
+        };
+
+        uniqueClassIds.forEach((classId) => {
+            const perClassQuizQuery = query(
+                collection(db, 'quizzes'),
+                where('classId', '==', classId)
+            );
+
+            const unsubscribe = onSnapshot(
+                perClassQuizQuery,
+                (snap) => {
+                    quizzesByClass.set(classId, snap.docs.map((quizDoc) => ({ id: quizDoc.id, ...quizDoc.data() })));
+                    emit();
+                },
+                (error) => {
+                    console.error(`Failed to load quizzes for class ${classId}:`, error);
+                    quizzesByClass.set(classId, []);
+                    emit();
+                }
+            );
+
+            listeners.push(unsubscribe);
+        });
+
+        return () => {
+            listeners.forEach((unsubscribe) => unsubscribe());
+        };
+    }, [JSON.stringify((classIds || []).filter(Boolean).sort())]);
+
     return quizzes;
 };
 

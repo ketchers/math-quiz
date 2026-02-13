@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, BookOpen } from 'lucide-react';
 import { useAuth, useTeacherRole, handleLogin, handleLogout, isFirebaseConfigured } from './services/firebaseService';
 import { TeacherDashboard } from './components/Teacher/TeacherDashboard';
@@ -7,6 +7,11 @@ import { StudentView } from './components/Student/StudentView';
 export default function App() {
   const { user, loading } = useAuth();
   const { isTeacher, isPrimaryTeacher, loading: roleLoading } = useTeacherRole(user);
+  const [teacherViewMode, setTeacherViewMode] = useState('teacher');
+
+  useEffect(() => {
+    setTeacherViewMode('teacher');
+  }, [user?.uid, isTeacher]);
 
   // 1. Safety Check: Is Firebase Configured?
   if (!isFirebaseConfigured) {
@@ -57,7 +62,25 @@ export default function App() {
 
   // 4. Authenticated Routes (Traffic Controller)
   if (isTeacher) {
-    return <TeacherDashboard user={user} handleLogout={handleLogout} isPrimaryTeacher={isPrimaryTeacher} />;
+    if (teacherViewMode === 'student') {
+      return (
+        <StudentView
+          user={user}
+          handleLogout={handleLogout}
+          isTeacherPreview={true}
+          onReturnToTeacher={() => setTeacherViewMode('teacher')}
+        />
+      );
+    }
+
+    return (
+      <TeacherDashboard
+        user={user}
+        handleLogout={handleLogout}
+        isPrimaryTeacher={isPrimaryTeacher}
+        onSwitchToStudentView={() => setTeacherViewMode('student')}
+      />
+    );
   } else {
     return <StudentView user={user} handleLogout={handleLogout} />;
   }

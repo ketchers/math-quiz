@@ -103,7 +103,7 @@ const QuestionEditor = ({ question, index, onChange, onDelete }) => {
 };
 
 // --- MAIN EDITOR (No logic changes, just structure) ---
-export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
+export const MathEditor = ({ quiz, setQuiz, isTeacher, classes = [] }) => {
     if (!quiz) return null;
 
     const updateQuestion = (index, newQ) => {
@@ -141,13 +141,40 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
                 </div>
                 <div>
                     <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Description / Instructions</label>
-                    <input 
-                        className="w-full text-sm text-slate-600 border-b border-slate-200 pb-2 outline-none focus:border-indigo-500 transition" 
+                    <textarea
+                        rows={3}
+                        className="w-full text-sm text-slate-600 border border-slate-200 rounded-lg p-3 outline-none focus:border-indigo-500 transition"
                         value={quiz.description || ""} 
                         onChange={(e) => setQuiz({...quiz, description: e.target.value})} 
-                        placeholder="Brief instructions for students..."
+                        placeholder="Brief instructions for students (Markdown supported)..."
                     />
                 </div>
+
+                {isTeacher ? (
+                    <div>
+                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Class</label>
+                        <select
+                            value={quiz.classId || ''}
+                            onChange={(event) => {
+                                const nextClassId = event.target.value;
+                                const selectedClass = classes.find((row) => row.id === nextClassId);
+                                setQuiz({
+                                    ...quiz,
+                                    classId: nextClassId,
+                                    className: selectedClass?.name || '',
+                                });
+                            }}
+                            className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-3 outline-none focus:border-indigo-500 transition bg-white"
+                        >
+                            <option value="">Select a class...</option>
+                            {classes.map((classroom) => (
+                                <option key={classroom.id} value={classroom.id}>
+                                    {classroom.name} {classroom.isArchived ? '(Archived)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                ) : null}
 
                 <div className="flex flex-wrap gap-4 pt-2">
                     <label className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border bg-white text-slate-600 border-slate-200">
@@ -182,6 +209,12 @@ export const MathEditor = ({ quiz, setQuiz, isTeacher }) => {
                     >
                         {quiz.isLocked ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>} 
                         {quiz.isLocked ? 'Quiz Hidden' : 'Quiz Visible'}
+                    </button>
+                    <button
+                        onClick={() => setQuiz({ ...quiz, allowReview: !quiz.allowReview })}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold border transition ${quiz.allowReview !== false ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-500 border-slate-200'}`}
+                    >
+                        {quiz.allowReview !== false ? 'Review Enabled' : 'Review Disabled'}
                     </button>
                 </div>
             </div>
